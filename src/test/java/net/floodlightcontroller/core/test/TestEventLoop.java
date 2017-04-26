@@ -1,19 +1,13 @@
 package net.floodlightcontroller.core.test;
 
+import com.google.common.collect.ImmutableList;
+import io.netty.channel.*;
+import io.netty.util.concurrent.AbstractScheduledEventExecutor;
+import io.netty.util.concurrent.Future;
+
 import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.concurrent.TimeUnit;
-
-import com.google.common.collect.ImmutableList;
-
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelPromise;
-import io.netty.channel.DefaultChannelPromise;
-import io.netty.channel.EventLoop;
-import io.netty.channel.EventLoopGroup;
-import io.netty.util.concurrent.AbstractScheduledEventExecutor;
-import io.netty.util.concurrent.Future;
 
 public final class TestEventLoop extends AbstractScheduledEventExecutor implements EventLoop {
 
@@ -100,6 +94,11 @@ public final class TestEventLoop extends AbstractScheduledEventExecutor implemen
     @Override
     public ChannelFuture register(Channel channel) {
         return register(channel, new DefaultChannelPromise(channel, this));
+    }
+
+    @Override
+    public ChannelFuture register(ChannelPromise channelPromise) {
+        return null;
     }
 
     @Override
