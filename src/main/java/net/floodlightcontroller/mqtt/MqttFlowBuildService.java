@@ -31,16 +31,38 @@ public class MqttFlowBuildService implements IMqttFlowBuildService {
 
         // layer 4 part
         if (iPv4.getProtocol() == IpProtocol.TCP) {
-            matchBuilder.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
-                    .setExact(MatchField.TCP_DST, ((TCP) iPv4.getPayload()).getDestinationPort())
-                    .setExact(MatchField.TCP_SRC, ((TCP) iPv4.getPayload()).getSourcePort());
+            matchBuilder.setExact(MatchField.IP_PROTO, IpProtocol.TCP);
+
+            if (flipIPv4 && (((TCP) iPv4.getPayload()).getDestinationPort().equals(TransportPort.of(1883)))) {
+//                System.out.println("special flow1");
+                matchBuilder
+                        .setExact(MatchField.TCP_SRC, ((TCP) iPv4.getPayload()).getDestinationPort())
+                        .wildcard(MatchField.TCP_DST);
+            } else if(!flipIPv4 && (((TCP) iPv4.getPayload()).getDestinationPort().equals(TransportPort.of(1883)))) {
+//                System.out.println("special flow2");
+                matchBuilder
+                        .wildcard(MatchField.TCP_SRC)
+                        .setExact(MatchField.TCP_DST, ((TCP) iPv4.getPayload()).getDestinationPort());
+            } else if (flipIPv4) {
+//                System.out.println("normal flow1");
+                matchBuilder
+                .setExact(MatchField.TCP_SRC, ((TCP) iPv4.getPayload()).getDestinationPort())
+                .setExact(MatchField.TCP_DST, ((TCP) iPv4.getPayload()).getSourcePort());
+            } else {
+//                System.out.println("normal flow2");
+                matchBuilder
+                .setExact(MatchField.TCP_DST, ((TCP) iPv4.getPayload()).getDestinationPort())
+                .setExact(MatchField.TCP_SRC, ((TCP) iPv4.getPayload()).getSourcePort());
+            }
 
         } else if (iPv4.getProtocol() == IpProtocol.UDP) {
             matchBuilder.setExact(MatchField.IP_PROTO, IpProtocol.UDP)
-                    .setExact(MatchField.UDP_DST, ((UDP) iPv4.getPayload()).getDestinationPort())
-                    .setExact(MatchField.UDP_SRC, ((UDP) iPv4.getPayload()).getSourcePort());
+            .setExact(MatchField.UDP_DST, ((UDP) iPv4.getPayload()).getDestinationPort())
+            .wildcard(MatchField.UDP_SRC) // todo classify, but it works since we just have one UDP match type (RTP stream)
+            /*.setExact(MatchField.UDP_SRC, ((UDP) iPv4.getPayload()).getSourcePort())*/;
         }
 
+        // TODO: 04/05/17 layer 2 part for match fields
         // layer 3 part
         if (flipIPv4) {
             matchBuilder.setExact(MatchField.IPV4_SRC, iPv4.getDestinationAddress())
@@ -84,8 +106,8 @@ public class MqttFlowBuildService implements IMqttFlowBuildService {
                 .buildApplyActions()
                 .setActions(actionsList)
                 .build();
-        if (meterId != -1 && factory.getVersion().compareTo(OFVersion.OF_13) >= 0) {
-            instructionsList.add(meter);
+        if (meterId != -1) {
+            //instructionsList.add(meter);
         }
         instructionsList.add(applyActions);
 
@@ -131,7 +153,7 @@ public class MqttFlowBuildService implements IMqttFlowBuildService {
                 .setIdleTimeout(idleTimeout)
                 .setHardTimeout(hardTimeout)
                 .setOutPort(OFPort.ANY)
-                .setPriority(Integer.MAX_VALUE)
+                .setPriority(cookieName.equals(MqttModule.COOKIE_NAME_DEFAULT) ? Integer.MAX_VALUE - 1 :  Integer.MAX_VALUE)
                 .setBufferId(OFBufferId.NO_BUFFER);
 
         if (factory.getVersion().compareTo(OFVersion.OF_11) >= 0) {
@@ -144,8 +166,6 @@ public class MqttFlowBuildService implements IMqttFlowBuildService {
 
         return fmb.build();
     }
-
-
 
     /**
      * Generic cookie generator

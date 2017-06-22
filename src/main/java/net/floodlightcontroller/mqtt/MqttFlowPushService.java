@@ -1,8 +1,10 @@
 package net.floodlightcontroller.mqtt;
 
+import io.moquette.parser.proto.messages.ConnectIpPortMessage;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.internal.IOFSwitchService;
 import net.floodlightcontroller.packet.IPv4;
+import net.floodlightcontroller.packet.TCP;
 import org.projectfloodlight.openflow.protocol.OFFactory;
 import org.projectfloodlight.openflow.protocol.OFFlowAdd;
 import org.projectfloodlight.openflow.protocol.match.Match;
@@ -12,8 +14,11 @@ import org.projectfloodlight.openflow.types.OFPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Arrays;
 import java.util.List;
+
+import static net.floodlightcontroller.mqtt.MqttModule.METER_ID_MQTT;
+import static net.floodlightcontroller.mqtt.MqttModule.QUEUE_ID_MQTT;
+import static net.floodlightcontroller.mqtt.MqttModule.QUEUE_ID_STREAM;
 
 /**
  * Created by Marius Reimer on 25/03/17.
@@ -31,39 +36,27 @@ public class MqttFlowPushService implements IMqttFlowPushService {
     }
 
     @Override
-    public List<Match> pushAndReturnFlows(DatapathId switchId, IPv4 iPv4, OFPort ofPort, Integer queueId, Integer meterId, String cookieName) {
+    public Match pushAndReturnFlows(DatapathId switchId, boolean flipIPv4, IPv4 iPv4, OFPort ofPort, Integer queueId, Integer meterId, String cookieName) {
         final IOFSwitch sw = switchService.getSwitch(switchId);
         final OFFactory myFactory = sw.getOFFactory();
 
         logger.info("Switch {} Port {}", switchId.toString(),
-                OFPort.ALL.toString());
+                ofPort.toString());
 
-        final Match forwardMatch = flowBuildService.buildMatch(myFactory, false, iPv4);
-        final Match backwardMatch = flowBuildService.buildMatch(myFactory, true, iPv4);
+        final Match match = flowBuildService.buildMatch(myFactory, flipIPv4, iPv4);
+        final OFFlowAdd flow = flowBuildService.buildFlowAdd(queueId, meterId, ofPort, myFactory, match, cookieName);
 
-        final OFFlowAdd forwardFlow = flowBuildService.buildFlowAdd(queueId, meterId, ofPort, myFactory, forwardMatch, cookieName);
-        final OFFlowAdd backwardFlow = flowBuildService.buildFlowAdd(queueId, meterId, ofPort, myFactory, backwardMatch, cookieName);
+        sw.write(flow);
+        logger.info("flowPusher: Flows were pushed");
 
-        sw.write(forwardFlow);
-        logger.info("flowPusher: Flows were pushed: {}", forwardFlow);
-
-        // stream is a one direction udp flow (source -> sink)
-        if (iPv4.getProtocol().equals(IpProtocol.UDP)) {
-            return Arrays.asList(forwardMatch);
-        } else {
-            sw.write(backwardFlow);
-            logger.info("flowPusher: Flows were pushed: {}", backwardFlow);
-        }
-
-        return Arrays.asList(forwardMatch, backwardMatch);
+        return match;
     }
 
-    @Override
-    public void removeDefaultFlows(IOFSwitch sw, IPv4 iPv4Tcp) {
+    private void removeDefaultFlows(IOFSwitch sw, IPv4 iPv4) {
         final OFFactory factory = sw.getOFFactory();
 
-        final Match forwardMatch = flowBuildService.buildMatch(factory, true, iPv4Tcp);
-        final Match backwardMatch = flowBuildService.buildMatch(factory, false, iPv4Tcp);
+        final Match forwardMatch = flowBuildService.buildMatch(factory, false, iPv4);
+        final Match backwardMatch = flowBuildService.buildMatch(factory, true, iPv4);
 
         sw.write(factory.buildFlowDelete()
                 .setMatch(forwardMatch)
@@ -74,5 +67,64 @@ public class MqttFlowPushService implements IMqttFlowPushService {
                 .setMatch(backwardMatch)
                 .setCookie(MqttFlowBuildService.buildCookie(MqttModule.COOKIE_NAME_DEFAULT))
                 .build());
+    }
+
+    @Override
+    public Match pushStreamFlows(IPv4 iPv4, boolean flipIPv4, String clientId, DatapathId dataPathId, OFPort ofPort) {
+        final IOFSwitch sw = switchService.getSwitch(dataPathId);
+
+        if (sw == null) return null;
+
+        // push the new flows
+        final Match streamMatch = pushAndReturnFlows(sw.getId(), flipIPv4, iPv4,
+                ofPort, QUEUE_ID_STREAM, MqttModule.METER_ID_STREAM, clientId);
+
+        logger.info("Stream flows are pushed");
+
+        return streamMatch;
+    }
+
+    @Override
+    public Match pushMqttEstFlows(ConnectIpPortMessage msg, boolean flipIPv4, String clientId, DatapathId dataPathId, OFPort ofPort) {
+        final IOFSwitch sw = switchService.getSwitch(dataPathId);
+
+        if (sw == null) {
+            return null;
+        }
+
+        final TCP tcp = new TCP()
+                .setSourcePort(msg.getRemotePort())
+                .setDestinationPort(msg.getLocalPort());
+
+        // information part to the broker
+        final IPv4 iPv4Tcp = new IPv4()
+                .setProtocol(IpProtocol.TCP)
+                .setSourceAddress(msg.getRemoteAddress())
+                .setDestinationAddress(msg.getLocalAddress());
+        iPv4Tcp.setPayload(tcp);
+
+        // todo test if it causes socket closed exception
+//        removeDefaultFlows(sw, iPv4Tcp);
+
+        // push the new flows
+        final Match mqttMatch = pushAndReturnFlows(sw.getId(), flipIPv4, iPv4Tcp,
+                ofPort, QUEUE_ID_MQTT, METER_ID_MQTT, clientId);
+
+        logger.info("New Flows are pushed");
+
+        return mqttMatch;
+    }
+
+    @Override
+    public void removeFlowsForCookie(DatapathId dataPathId, List<Match> clientIdMatches, String cookieName) {
+        final IOFSwitch sw = switchService.getSwitch(dataPathId);
+        if (sw == null) return;
+
+        clientIdMatches.forEach(match -> sw.write(sw.getOFFactory().buildFlowDelete()
+                .setMatch(match)
+                .setCookie(MqttFlowBuildService.buildCookie(cookieName))
+                .build()));
+
+        logger.info("cleared flows for cookieName {} in switch {}", MqttFlowBuildService.buildCookie(cookieName), dataPathId);
     }
 }

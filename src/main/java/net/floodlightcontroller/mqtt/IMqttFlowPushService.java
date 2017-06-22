@@ -1,6 +1,7 @@
 package net.floodlightcontroller.mqtt;
 
-import net.floodlightcontroller.core.IOFSwitch;
+import io.moquette.parser.proto.messages.ConnectIpPortMessage;
+import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.packet.IPv4;
 import org.projectfloodlight.openflow.protocol.match.Match;
 import org.projectfloodlight.openflow.types.DatapathId;
@@ -21,7 +22,11 @@ public interface IMqttFlowPushService {
      * @param meterId OF metering id
      * @param cookieName cookie name to be added    @return list of matches that were created
      */
-    List<Match> pushAndReturnFlows(DatapathId switchId, IPv4 iPv4, OFPort ofPort, Integer queueId, Integer meterId, String cookieName);
+    Match pushAndReturnFlows(DatapathId switchId, boolean flipIPv4, IPv4 iPv4, OFPort ofPort, Integer queueId, Integer meterId, String cookieName);
 
-    void removeDefaultFlows(IOFSwitch sw, IPv4 iPv4Tcp);
+    Match pushStreamFlows(IPv4 iPv4, boolean flipIPv4, String clientId, DatapathId dataPathId, OFPort ofPort);
+
+    Match pushMqttEstFlows(ConnectIpPortMessage msg, boolean flipIPv4, String clientId, DatapathId dataPathId, OFPort ofPort);
+
+    void removeFlowsForCookie(DatapathId dataPathId, List<Match> clientIdMatches, String cookieName);
 }
